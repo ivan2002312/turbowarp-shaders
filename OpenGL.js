@@ -17,6 +17,24 @@
       this.vertexSource = '';
       this.fragmentSource = '';
       this.isActive = false;
+      this.sceneTexture = null;
+      this.tempCanvas = null;
+      this.tempCtx = null;
+      
+      // Автосброс при остановке
+      if (Scratch.vm) {
+        Scratch.vm.runtime.on('PROJECT_STOP_ALL', () => this.resetAll());
+      }
+    }
+
+    resetAll() {
+      if (this.canvas) this.canvas.style.display = 'none';
+      if (this.gl) {
+        if (this.sceneTexture) this.gl.deleteTexture(this.sceneTexture);
+        this.sceneTexture = null;
+        this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+      }
+      this.isActive = false;
     }
 
     getInfo() {
@@ -51,7 +69,7 @@
             arguments: {
               SOURCE: {
                 type: Scratch.ArgumentType.STRING,
-                defaultValue: 'precision mediump float; varying vec2 vTexCoord; uniform float uTime; void main() { gl_FragColor = vec4(vTexCoord.x, vTexCoord.y, 0.5, 1.0); }'
+                defaultValue: 'precision mediump float; varying vec2 vTexCoord; uniform float uTime; uniform sampler2D uSampler; void main() { vec4 color = texture2D(uSampler, vTexCoord); float vignette = 1.0 - length(vTexCoord - 0.5) * 1.2; color.rgb *= clamp(vignette, 0.0, 1.0); gl_FragColor = color; }'
               }
             }
           },
@@ -115,9 +133,13 @@
         parent.style.position = 'relative';
         parent.appendChild(this.canvas);
 
+        // Временный canvas для захвата сцены
+        this.tempCanvas = document.createElement('canvas');
+        this.tempCtx = this.tempCanvas.getContext('2d');
+
         const glOptions = {
           alpha: true,
-          premultipliedAlpha: false,
+          premultipliedAlpha: true,
           preserveDrawingBuffer: false,
           antialias: false,
           depth: false,
@@ -232,6 +254,15 @@
       const width = stageCanvas.width;
       const height = stageCanvas.height;
 
+      // Захват сцены
+      if (this.tempCanvas.width !== width || this.tempCanvas.height !== height) {
+        this.tempCanvas.width = width;
+        this.tempCanvas.height = height;
+      }
+      this.tempCtx.clearRect(0, 0, width, height);
+      this.tempCtx.drawImage(stageCanvas, 0, 0, width, height);
+
+      // Обновление размеров
       if (this.canvas.width !== width || this.canvas.height !== height) {
         this.canvas.width = width;
         this.canvas.height = height;
@@ -243,13 +274,29 @@
       this.canvas.style.height = rect.height + 'px';
       this.isActive = true;
 
+      // Текстура сцены
+      if (!this.sceneTexture) {
+        this.sceneTexture = gl.createTexture();
+      }
+      
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.sceneTexture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.tempCanvas);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
       gl.useProgram(this.program);
 
+      // Uniforms
       const timeLoc = gl.getUniformLocation(this.program, 'uTime');
-      if (timeLoc !== null) {
-        gl.uniform1f(timeLoc, this.currentTime);
-      }
+      if (timeLoc !== null) gl.uniform1f(timeLoc, this.currentTime);
 
+      const samplerLoc = gl.getUniformLocation(this.program, 'uSampler');
+      if (samplerLoc !== null) gl.uniform1i(samplerLoc, 0);
+
+      // Вершины
       const vertices = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
       const buffer = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
