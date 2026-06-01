@@ -41,7 +41,7 @@
 
     getInfo() {
       return {
-        id: 'openglshadersreset',
+        id: 'openglshaders',
         name: 'OpenGL Шейдеры',
         color1: '#4A90D9',
         color2: '#3570B0',
@@ -74,6 +74,19 @@
                 defaultValue: 'precision mediump float; varying vec2 vTexCoord; uniform float uTime; uniform sampler2D uSampler; void main() { vec4 color = texture2D(uSampler, vTexCoord); gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); }'
               }
             }
+          },
+          '---',
+          {
+            opcode: 'loadFragmentFromFile',
+            blockType: Scratch.BlockType.REPORTER,
+            text: 'загрузить .frag файл',
+            disableMonitor: true
+          },
+          {
+            opcode: 'loadVertexFromFile',
+            blockType: Scratch.BlockType.REPORTER,
+            text: 'загрузить .vert файл',
+            disableMonitor: true
           },
           '---',
           {
@@ -113,9 +126,164 @@
             opcode: 'getLog',
             blockType: Scratch.BlockType.REPORTER,
             text: 'лог компиляции'
+          },
+          {
+            opcode: 'getFragmentSource',
+            blockType: Scratch.BlockType.REPORTER,
+            text: 'текущий фрагментный шейдер'
           }
         ]
       };
+    }
+
+    // Точно такой же showFilePrompt как в расширении Files
+    showFilePrompt(accept) {
+      return new Promise((_resolve) => {
+        const callback = (text) => {
+          _resolve(text);
+          Scratch.vm.renderer.removeOverlay(outer);
+          Scratch.vm.runtime.off("PROJECT_STOP_ALL", handleProjectStopped);
+          document.body.removeEventListener("keydown", handleKeyDown, {
+            capture: true,
+          });
+        };
+
+        let isReadingFile = false;
+
+        const readFile = (file) => {
+          if (isReadingFile) {
+            return;
+          }
+          isReadingFile = true;
+
+          const reader = new FileReader();
+          reader.onload = () => {
+            callback(reader.result);
+          };
+          reader.onerror = () => {
+            console.error("Ошибка чтения файла", reader.error);
+            callback("");
+          };
+          reader.readAsText(file);
+        };
+
+        const handleKeyDown = (e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            e.preventDefault();
+            callback("");
+          }
+        };
+        document.body.addEventListener("keydown", handleKeyDown, {
+          capture: true,
+        });
+
+        const handleProjectStopped = () => {
+          callback("");
+        };
+        Scratch.vm.runtime.on("PROJECT_STOP_ALL", handleProjectStopped);
+
+        const INITIAL_BORDER_COLOR = "#888";
+        const DROPPING_BORDER_COLOR = "#03a9fc";
+
+        const outer = document.createElement("div");
+        outer.style.pointerEvents = "auto";
+        outer.style.width = "100%";
+        outer.style.height = "100%";
+        outer.style.display = "flex";
+        outer.style.alignItems = "center";
+        outer.style.justifyContent = "center";
+        outer.style.background = "rgba(0, 0, 0, 0.5)";
+        outer.style.color = "black";
+        outer.style.colorScheme = "light";
+        outer.addEventListener("dragover", (e) => {
+          if (e.dataTransfer.types.includes("Files")) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+            modal.style.borderColor = DROPPING_BORDER_COLOR;
+          }
+        });
+        outer.addEventListener("dragleave", () => {
+          modal.style.borderColor = INITIAL_BORDER_COLOR;
+        });
+        outer.addEventListener("drop", (e) => {
+          const file = e.dataTransfer.files[0];
+          if (file) {
+            e.preventDefault();
+            readFile(file);
+          }
+        });
+        outer.addEventListener("click", (e) => {
+          if (e.target === outer) {
+            callback("");
+          }
+        });
+
+        const modal = document.createElement("button");
+        modal.style.boxShadow = "0 0 10px -5px currentColor";
+        modal.style.cursor = "pointer";
+        modal.style.font = "inherit";
+        modal.style.background = "white";
+        modal.style.padding = "16px";
+        modal.style.borderRadius = "16px";
+        modal.style.border = `8px dashed ${INITIAL_BORDER_COLOR}`;
+        modal.style.position = "relative";
+        modal.style.textAlign = "center";
+        modal.addEventListener("click", () => {
+          input.click();
+        });
+        modal.focus();
+        outer.appendChild(modal);
+
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = accept;
+        input.addEventListener("change", (e) => {
+          const file = e.target.files[0];
+          if (file) {
+            readFile(file);
+          }
+        });
+
+        const title = document.createElement("div");
+        title.textContent = "Выберите файл шейдера";
+        title.style.fontSize = "1.5em";
+        title.style.marginBottom = "8px";
+        modal.appendChild(title);
+
+        const subtitle = document.createElement("div");
+        subtitle.textContent = `Поддерживаемые форматы: ${accept}`;
+        modal.appendChild(subtitle);
+
+        const overlay = Scratch.vm.renderer.addOverlay(outer, "scale");
+        overlay.container.style.zIndex = "100";
+      });
+    }
+
+    loadFragmentFromFile() {
+      return this.showFilePrompt(".frag,.glsl,.txt").then((content) => {
+        if (content) {
+          this.fragmentSource = content;
+          this.shaderLog = 'Фрагментный шейдер загружен из файла';
+          console.log('Фрагментный шейдер загружен, длина:', content.length);
+        } else {
+          this.shaderLog = 'Загрузка отменена';
+        }
+        return content;
+      });
+    }
+
+    loadVertexFromFile() {
+      return this.showFilePrompt(".vert,.glsl,.txt").then((content) => {
+        if (content) {
+          this.vertexSource = content;
+          this.shaderLog = 'Вершинный шейдер загружен из файла';
+          console.log('Вершинный шейдер загружен, длина:', content.length);
+        } else {
+          this.shaderLog = 'Загрузка отменена';
+        }
+        return content;
+      });
     }
 
     initGL() {
@@ -133,7 +301,6 @@
         this.canvas = document.createElement('canvas');
         this.canvas.id = 'shader-overlay';
         
-        // Удаляем старый canvas если есть
         const oldCanvas = document.getElementById('shader-overlay');
         if (oldCanvas) oldCanvas.remove();
         
@@ -202,7 +369,6 @@
         this.program = null;
       }
 
-      // Компиляция вершинного шейдера
       const vs = gl.createShader(gl.VERTEX_SHADER);
       gl.shaderSource(vs, this.vertexSource);
       gl.compileShader(vs);
@@ -215,7 +381,6 @@
         return;
       }
 
-      // Компиляция фрагментного шейдера
       const fs = gl.createShader(gl.FRAGMENT_SHADER);
       gl.shaderSource(fs, this.fragmentSource);
       gl.compileShader(fs);
@@ -229,7 +394,6 @@
         return;
       }
 
-      // Линковка программы
       const program = gl.createProgram();
       gl.attachShader(program, vs);
       gl.attachShader(program, fs);
@@ -289,13 +453,11 @@
       const stageCanvas = Scratch.renderer.canvas;
       if (!stageCanvas) return;
 
-      // Захват сцены
       if (!this.captureScene()) return;
 
       const width = stageCanvas.width;
       const height = stageCanvas.height;
 
-      // Обновление размеров canvas
       if (this.canvas.width !== width || this.canvas.height !== height) {
         this.canvas.width = width;
         this.canvas.height = height;
@@ -304,7 +466,6 @@
       this.canvas.style.display = 'block';
       this.isActive = true;
 
-      // Создание/обновление текстуры
       if (!this.sceneTexture) {
         this.sceneTexture = gl.createTexture();
       }
@@ -317,17 +478,14 @@
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-      // Использование программы
       gl.useProgram(this.program);
 
-      // Установка uniforms
       const timeLoc = gl.getUniformLocation(this.program, 'uTime');
       if (timeLoc !== null) gl.uniform1f(timeLoc, this.currentTime);
 
       const samplerLoc = gl.getUniformLocation(this.program, 'uSampler');
       if (samplerLoc !== null) gl.uniform1i(samplerLoc, 0);
 
-      // Создание буфера вершин
       const vertices = new Float32Array([
         -1, -1,
          1, -1,
@@ -345,13 +503,11 @@
         gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
       }
 
-      // Отрисовка
       gl.viewport(0, 0, width, height);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       
-      // Очистка
       gl.deleteBuffer(buffer);
     }
 
@@ -380,6 +536,10 @@
 
     getLog() {
       return this.shaderLog || 'Нет логов';
+    }
+
+    getFragmentSource() {
+      return this.fragmentSource || 'Шейдер не задан';
     }
   }
 
