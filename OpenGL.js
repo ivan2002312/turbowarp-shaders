@@ -1,8 +1,3 @@
-// Name: OpenGL Шейдеры
-// ID: openglshadersreset
-// Description: OpenGL шейдеры с автосбросом при остановке игры
-// By: User
-
 (function (Scratch) {
   "use strict";
 
@@ -20,19 +15,26 @@
       this.sceneTexture = null;
       this.tempCanvas = null;
       this.tempCtx = null;
+      this.animationFrame = null;
       
-      // Автосброс при остановке
       if (Scratch.vm) {
         Scratch.vm.runtime.on('PROJECT_STOP_ALL', () => this.resetAll());
       }
     }
 
     resetAll() {
-      if (this.canvas) this.canvas.style.display = 'none';
+      if (this.animationFrame) {
+        cancelAnimationFrame(this.animationFrame);
+        this.animationFrame = null;
+      }
+      if (this.canvas) {
+        this.canvas.style.display = 'none';
+      }
       if (this.gl) {
-        if (this.sceneTexture) this.gl.deleteTexture(this.sceneTexture);
-        this.sceneTexture = null;
-        this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+        if (this.sceneTexture) {
+          this.gl.deleteTexture(this.sceneTexture);
+          this.sceneTexture = null;
+        }
       }
       this.isActive = false;
     }
@@ -69,7 +71,7 @@
             arguments: {
               SOURCE: {
                 type: Scratch.ArgumentType.STRING,
-                defaultValue: 'precision mediump float; varying vec2 vTexCoord; uniform float uTime; uniform sampler2D uSampler; void main() { vec4 color = texture2D(uSampler, vTexCoord); float vignette = 1.0 - length(vTexCoord - 0.5) * 1.2; color.rgb *= clamp(vignette, 0.0, 1.0); gl_FragColor = color; }'
+                defaultValue: 'precision mediump float; varying vec2 vTexCoord; uniform float uTime; uniform sampler2D uSampler; void main() { vec4 color = texture2D(uSampler, vTexCoord); gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); }'
               }
             }
           },
@@ -97,6 +99,11 @@
             text: 'нарисовать шейдер'
           },
           {
+            opcode: 'startDraw',
+            blockType: Scratch.BlockType.COMMAND,
+            text: 'запустить непрерывное рисование'
+          },
+          {
             opcode: 'hide',
             blockType: Scratch.BlockType.COMMAND,
             text: 'спрятать шейдер'
@@ -117,63 +124,63 @@
       try {
         const stageCanvas = Scratch.renderer.canvas;
         if (!stageCanvas) {
-          console.error('Сцена не найдена');
+          this.shaderLog = 'Сцена не найдена';
           return;
         }
 
-        const parent = stageCanvas.parentElement;
-        if (!parent) {
-          console.error('Родитель не найден');
-          return;
-        }
-
+        const parent = stageCanvas.parentElement || document.body;
+        
         this.canvas = document.createElement('canvas');
-        this.canvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:100;display:none;';
+        this.canvas.id = 'shader-overlay';
+        
+        // Удаляем старый canvas если есть
+        const oldCanvas = document.getElementById('shader-overlay');
+        if (oldCanvas) oldCanvas.remove();
+        
+        this.canvas.style.cssText = `
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          pointer-events: none;
+          z-index: 1000;
+          display: none;
+        `;
         
         parent.style.position = 'relative';
         parent.appendChild(this.canvas);
 
-        // Временный canvas для захвата сцены
         this.tempCanvas = document.createElement('canvas');
-        this.tempCtx = this.tempCanvas.getContext('2d');
+        this.tempCtx = this.tempCanvas.getContext('2d', { willReadFrequently: true });
 
         const glOptions = {
           alpha: true,
           premultipliedAlpha: true,
-          preserveDrawingBuffer: false,
-          antialias: false,
-          depth: false,
-          stencil: false
+          preserveDrawingBuffer: true,
+          antialias: false
         };
 
         this.gl = this.canvas.getContext('webgl', glOptions) || 
                   this.canvas.getContext('experimental-webgl', glOptions);
 
         if (!this.gl) {
-          console.error('WebGL не поддерживается');
+          this.shaderLog = 'WebGL не поддерживается';
           return;
         }
 
-        const gl = this.gl;
-        gl.clearColor(0, 0, 0, 0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-
         this.ready = true;
         this.shaderLog = 'OpenGL готов';
-        console.log('OpenGL инициализирован');
       } catch (e) {
-        console.error('Ошибка:', e);
         this.shaderLog = 'Ошибка: ' + e.message;
       }
     }
 
     setVertexShader(args) {
-      if (!this.ready) this.initGL();
       this.vertexSource = args.SOURCE;
     }
 
     setFragmentShader(args) {
-      if (!this.ready) this.initGL();
       this.fragmentSource = args.SOURCE;
     }
 
@@ -195,36 +202,42 @@
         this.program = null;
       }
 
+      // Компиляция вершинного шейдера
       const vs = gl.createShader(gl.VERTEX_SHADER);
       gl.shaderSource(vs, this.vertexSource);
       gl.compileShader(vs);
 
       if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) {
-        this.shaderLog = 'Ошибка вершинного шейдера: ' + gl.getShaderInfoLog(vs);
+        const info = gl.getShaderInfoLog(vs);
+        this.shaderLog = 'Ошибка вершинного шейдера: ' + info;
         console.error(this.shaderLog);
         gl.deleteShader(vs);
         return;
       }
 
+      // Компиляция фрагментного шейдера
       const fs = gl.createShader(gl.FRAGMENT_SHADER);
       gl.shaderSource(fs, this.fragmentSource);
       gl.compileShader(fs);
 
       if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
-        this.shaderLog = 'Ошибка фрагментного шейдера: ' + gl.getShaderInfoLog(fs);
+        const info = gl.getShaderInfoLog(fs);
+        this.shaderLog = 'Ошибка фрагментного шейдера: ' + info;
         console.error(this.shaderLog);
         gl.deleteShader(vs);
         gl.deleteShader(fs);
         return;
       }
 
+      // Линковка программы
       const program = gl.createProgram();
       gl.attachShader(program, vs);
       gl.attachShader(program, fs);
       gl.linkProgram(program);
 
       if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        this.shaderLog = 'Ошибка линковки: ' + gl.getProgramInfoLog(program);
+        const info = gl.getProgramInfoLog(program);
+        this.shaderLog = 'Ошибка линковки: ' + info;
         console.error(this.shaderLog);
         gl.deleteShader(vs);
         gl.deleteShader(fs);
@@ -244,37 +257,54 @@
       this.currentTime = parseFloat(args.T) || 0;
     }
 
+    captureScene() {
+      const stageCanvas = Scratch.renderer.canvas;
+      if (!stageCanvas) return false;
+
+      const width = stageCanvas.width;
+      const height = stageCanvas.height;
+
+      if (this.tempCanvas.width !== width || this.tempCanvas.height !== height) {
+        this.tempCanvas.width = width;
+        this.tempCanvas.height = height;
+      }
+
+      try {
+        this.tempCtx.clearRect(0, 0, width, height);
+        this.tempCtx.drawImage(stageCanvas, 0, 0, width, height);
+        return true;
+      } catch (e) {
+        console.error('Ошибка захвата сцены:', e);
+        return false;
+      }
+    }
+
     draw() {
-      if (!this.ready || !this.program || !this.gl || !this.canvas) return;
+      if (!this.ready || !this.program || !this.gl || !this.canvas) {
+        console.log('Не готово:', { ready: this.ready, program: !!this.program, gl: !!this.gl, canvas: !!this.canvas });
+        return;
+      }
 
       const gl = this.gl;
       const stageCanvas = Scratch.renderer.canvas;
       if (!stageCanvas) return;
 
+      // Захват сцены
+      if (!this.captureScene()) return;
+
       const width = stageCanvas.width;
       const height = stageCanvas.height;
 
-      // Захват сцены
-      if (this.tempCanvas.width !== width || this.tempCanvas.height !== height) {
-        this.tempCanvas.width = width;
-        this.tempCanvas.height = height;
-      }
-      this.tempCtx.clearRect(0, 0, width, height);
-      this.tempCtx.drawImage(stageCanvas, 0, 0, width, height);
-
-      // Обновление размеров
+      // Обновление размеров canvas
       if (this.canvas.width !== width || this.canvas.height !== height) {
         this.canvas.width = width;
         this.canvas.height = height;
       }
 
-      const rect = stageCanvas.getBoundingClientRect();
       this.canvas.style.display = 'block';
-      this.canvas.style.width = rect.width + 'px';
-      this.canvas.style.height = rect.height + 'px';
       this.isActive = true;
 
-      // Текстура сцены
+      // Создание/обновление текстуры
       if (!this.sceneTexture) {
         this.sceneTexture = gl.createTexture();
       }
@@ -287,17 +317,24 @@
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
+      // Использование программы
       gl.useProgram(this.program);
 
-      // Uniforms
+      // Установка uniforms
       const timeLoc = gl.getUniformLocation(this.program, 'uTime');
       if (timeLoc !== null) gl.uniform1f(timeLoc, this.currentTime);
 
       const samplerLoc = gl.getUniformLocation(this.program, 'uSampler');
       if (samplerLoc !== null) gl.uniform1i(samplerLoc, 0);
 
-      // Вершины
-      const vertices = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
+      // Создание буфера вершин
+      const vertices = new Float32Array([
+        -1, -1,
+         1, -1,
+        -1,  1,
+         1,  1
+      ]);
+      
       const buffer = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
       gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
@@ -308,13 +345,33 @@
         gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
       }
 
+      // Отрисовка
       gl.viewport(0, 0, width, height);
+      gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      
+      // Очистка
       gl.deleteBuffer(buffer);
     }
 
+    startDraw() {
+      const drawLoop = () => {
+        if (this.isActive) {
+          this.draw();
+          this.animationFrame = requestAnimationFrame(drawLoop);
+        }
+      };
+      
+      this.isActive = true;
+      this.animationFrame = requestAnimationFrame(drawLoop);
+    }
+
     hide() {
+      if (this.animationFrame) {
+        cancelAnimationFrame(this.animationFrame);
+        this.animationFrame = null;
+      }
       if (this.canvas) {
         this.canvas.style.display = 'none';
       }
