@@ -19,6 +19,7 @@
       this.width = 480;
       this.height = 360;
       this.sceneAccessible = false;
+      this.customUniforms = {};
       
       if (Scratch.vm) {
         Scratch.vm.runtime.on('PROJECT_STOP_ALL', () => this.resetAll());
@@ -83,6 +84,22 @@
             opcode: 'loadFragFile',
             blockType: Scratch.BlockType.COMMAND,
             text: 'загрузить .frag файл'
+          },
+          '---',
+          {
+            opcode: 'setUniform1f',
+            blockType: Scratch.BlockType.COMMAND,
+            text: 'установить [NAME] = [VALUE]',
+            arguments: {
+              NAME: {
+                type: Scratch.ArgumentType.STRING,
+                defaultValue: 'uIntensity'
+              },
+              VALUE: {
+                type: Scratch.ArgumentType.NUMBER,
+                defaultValue: 2.0
+              }
+            }
           },
           '---',
           {
@@ -179,7 +196,6 @@
         const oldCanvas = document.getElementById('shader-overlay');
         if (oldCanvas) oldCanvas.remove();
         
-        // ВАЖНО: высокий z-index и красный фон для проверки
         this.canvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:99999;';
         
         parent.style.position = 'relative';
@@ -223,6 +239,10 @@
 
     setFragmentShader(args) {
       this.fragmentSource = args.SOURCE;
+    }
+
+    setUniform1f(args) {
+      this.customUniforms[args.NAME] = parseFloat(args.VALUE) || 0;
     }
 
     compileProgram() {
@@ -319,6 +339,17 @@
 
       const timeLoc = gl.getUniformLocation(this.program, 'uTime');
       if (timeLoc) gl.uniform1f(timeLoc, this.currentTime);
+
+      // Пользовательские uniform-переменные
+      const keys = Object.keys(this.customUniforms);
+      for (let i = 0; i < keys.length; i++) {
+        const name = keys[i];
+        const value = this.customUniforms[name];
+        const loc = gl.getUniformLocation(this.program, name);
+        if (loc) {
+          gl.uniform1f(loc, value);
+        }
+      }
 
       const vertices = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
       const buffer = gl.createBuffer();
